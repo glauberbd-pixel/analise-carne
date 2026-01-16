@@ -2,33 +2,46 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 
-# Configuração visual
-st.set_page_config(page_title="Gestão de Grelhados", layout="wide")
+# CONFIGURAÇÃO VISUAL PREMIUM
+st.set_page_config(page_title="Gestão de Grelhados | Premium", layout="wide")
 
-st.title("🥩 Calculadora de Carnes: Gôndola vs Grelhado")
+# CSS para Dark Mode e Detalhes Dourados (Padrão Holding)
+st.markdown("""
+    <style>
+    .main { background-color: #0c0c0c; color: #e0e0e0; }
+    div[data-testid="stMetricValue"] { color: #d4af37 !important; font-size: 28px !important; }
+    label { color: #d4af37 !important; font-weight: bold; font-size: 16px; }
+    .stButton>button { background-color: #d4af37; color: black; font-weight: bold; border-radius: 5px; width: 100%; }
+    .stDataFrame { background-color: #1a1a1a; border-radius: 10px; }
+    h1, h2, h3 { color: #d4af37 !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Conexão com a planilha (usando o segredo que você vai configurar)
+st.title("🥩 Inteligência de Grelhados")
+st.markdown("---")
+
+# Conexão com a planilha "Analise carne"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- ENTRADA DE DADOS ---
+# --- ENTRADA DE DADOS NA LATERAL ---
 with st.sidebar:
-    st.header("Novo Lançamento")
+    st.header("📋 Lançamento")
     with st.form("form_carne", clear_on_submit=True):
-        corte = st.text_input("Corte (ex: Picanha)").strip()
+        corte = st.text_input("Nome do Corte (ex: Picanha)").strip()
         preco_kg = st.number_input("Preço do KG (R$)", min_value=0.0, format="%.2f")
         peso_gondola = st.number_input("Peso Gôndola (g)", min_value=0.0)
         peso_grelhado = st.number_input("Peso Grelhado (g)", min_value=0.0)
-        submit = st.form_submit_button("Salvar / Atualizar")
+        submit = st.form_submit_button("CALCULAR E SALVAR")
 
 if submit and corte:
     # --- CÁLCULOS MATEMÁTICOS ---
     dif_peso = peso_gondola - peso_grelhado
-    perda_perc = (dif_peso / peso_gondola) * 100 if peso_gondola > 0 else 0
+    perda_perc = (dif_peso / peso_gondola) if peso_gondola > 0 else 0
     p_g_gondola = preco_kg / 1000
     custo_total = p_g_gondola * peso_gondola
     p_g_grelhado = custo_total / peso_grelhado if peso_grelhado > 0 else 0
     dif_preco_g = p_g_grelhado - p_g_gondola
-    aumento_perc = (dif_preco_g / p_g_gondola) * 100 if p_g_gondola > 0 else 0
+    aumento_perc = (dif_preco_g / p_g_gondola) if p_g_gondola > 0 else 0
 
     # Lendo dados atuais
     df_atual = conn.read(ttl=0)
@@ -39,35 +52,42 @@ if submit and corte:
         "Peso_Gondola": peso_gondola,
         "Peso_Grelhado": peso_grelhado,
         "# Dif_Peso": round(dif_peso, 2),
-        "% Perda_Perc": round(perda_perc, 2),
+        "% Perda_Perc": round(perda_perc * 100, 2),
         "Preco_G_Gondola": round(p_g_gondola, 4),
         "Preco_G_Grelhado": round(p_g_grelhado, 4),
         "Dif_Preco_G": round(dif_preco_g, 4),
-        "% Aumento_Perc": round(aumento_perc, 2)
+        "% Aumento_Perc": round(aumento_perc * 100, 2)
     }
 
-    # --- LÓGICA DE NÃO REPETIR CORTE ---
+    # Lógica para evitar duplicidade de corte
     if not df_atual.empty and corte in df_atual['Corte'].values:
-        # Se o corte existe, encontra a linha e atualiza os dados
         idx = df_atual.index[df_atual['Corte'] == corte].tolist()[0]
         for col, val in nova_linha.items():
             df_atual.at[idx, col] = val
-        st.info(f"Dados de '{corte}' atualizados na planilha!")
+        st.info(f"Dados de '{corte}' atualizados com sucesso!")
     else:
-        # Se não existe, adiciona uma nova linha
         df_atual = pd.concat([df_atual, pd.DataFrame([nova_linha])], ignore_index=True)
-        st.success(f"'{corte}' cadastrado com sucesso!")
+        st.success(f"'{corte}' adicionado ao ranking!")
 
-    # Envia de volta para o Google Sheets
+    # Envia para o Google Sheets
     conn.update(data=df_atual)
 
-# --- RANKING E EXIBIÇÃO ---
+# --- RANKING E INDICADORES ---
 try:
-    df_exibir = conn.read(ttl=0)
-    if not df_exibir.empty:
-        st.subheader("🏆 Ranking: Menor Preço por Grama Grelhado")
-        # Ordenar do menor preço para o maior
-        ranking = df_exibir.sort_values(by="Preco_G_Grelhado", ascending=True)
+    df_db = conn.read(ttl=0)
+    if not df_db.empty:
+        # Ordenar pelo menor preço por grama grelhado (Melhor Custo-Benefício)
+        ranking = df_db.sort_values(by="Preco_G_Grelhado", ascending=True)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Melhor Escolha", ranking.iloc[0]['Corte'])
+        with col2:
+            st.metric("Menor Preço/g Grelhado", f"R$ {ranking.iloc[0]['Preco_G_Grelhado']:.4f}")
+        with col3:
+            st.metric("Menor Perda", f"{ranking.sort_values(by='% Perda_Perc').iloc[0]['% Perda_Perc']}%")
+
+        st.subheader("🏆 Ranking Geral de Custo-Benefício")
         st.dataframe(ranking, use_container_width=True)
 except:
-    st.info("Aguardando o primeiro lançamento para exibir a tabela.")
+    st.info("Aguardando o primeiro lançamento para gerar o ranking.")
